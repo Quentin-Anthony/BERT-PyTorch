@@ -136,6 +136,13 @@ def parse_arguments():
     parser.add_argument("--previous_phase_end_step", default=0, type=int,
                         help="Final step of previous phase")
 
+    ## Gradient Compression Hyperparameters
+    parser.add_argument("--density",
+                        default=1.0,
+                        type=float,
+                        help="The density of the gradients.")
+    parser.add_argument('--compressor', type=str, default='none')
+
     ## KFAC Hyperparameters
     parser.add_argument('--kfac', default=False, action='store_true',
                         help='Use KFAC')
@@ -294,7 +301,10 @@ def prepare_optimizers(args, model, checkpoint, global_steps):
         raise ValueError('Unknown lr decay "{}"'.format(args.lr_decay))
 
     optimizer = FusedLAMB(optimizer_grouped_parameters,
-                          lr=args.learning_rate)
+                          lr=args.learning_rate,
+                          density=args.density,
+                          compressor=args.compressor,
+                          rank=args.local_rank)
     
     if checkpoint is not None:
         if args.resume_step >= args.previous_phase_end_step:
