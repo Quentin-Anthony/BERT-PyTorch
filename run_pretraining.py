@@ -408,11 +408,13 @@ def take_optimizer_step(optimizer, preconditioner, model, scaler, global_step, a
             scaler.unscale_(optimizer)
         preconditioner.step()
     if scaler is not None:
+        topk_save_freq = 100
+        topk_percent = .01
         for index, (name, parameter) in enumerate(model.named_parameters()):
             rank = torch.distributed.get_rank()
             grad = parameter.grad.data
-            vals, indices = torch.topk(grad.flatten(), int(grad.nelement() * .01))
-            if rank == 0 and 'weight' in name and global_step % 100 == 0:
+            vals, indices = torch.topk(grad.flatten(), int(grad.nelement() * topk_percent))
+            if rank == 0 and 'weight' in name and global_step % topk_save_freq == 0:
                 indices_save_file = os.path.join(
                         args.output_dir,
                         'topk',
