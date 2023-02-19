@@ -188,6 +188,7 @@ def setup_training(args):
     args.model_output_dir = os.path.join(args.output_dir, 'pretrain_ckpts')
     if is_main_process():
         os.makedirs(args.model_output_dir, exist_ok=True)
+        os.makedirs(os.path.join(args.output_dir, 'topk'), exist_ok=True)
 
     logger.init(
         handlers=[
@@ -391,7 +392,7 @@ def prepare_dataset(args, checkpoint):
         sampler.load_state_dict(checkpoint['sampler'])
 
     loader = torch.utils.data.DataLoader(dataset, sampler=sampler,
-            batch_size=args.local_batch_size, num_workers=4, pin_memory=True)
+            batch_size=args.local_batch_size, num_workers=8, pin_memory=True, persistent_workers=True)
 
     if is_main_process():
         logger.info('Samples in dataset: {}'.format(len(dataset)))
@@ -401,12 +402,29 @@ def prepare_dataset(args, checkpoint):
     return loader, sampler
 
 
-def take_optimizer_step(optimizer, preconditioner, model, scaler):
+def take_optimizer_step(optimizer, preconditioner, model, scaler, global_step, args):
     if preconditioner is not None:
         if scaler is not None:
             scaler.unscale_(optimizer)
         preconditioner.step()
     if scaler is not None:
+        for index, (name, parameter) in enumerate(model.named_parameters()):
+            rank = torch.distributed.get_rank()
+            grad = parameter.grad.data
+            vals, indices = torch.topk(grad.flatten(), int(grad.nelement() * .01))
+            if rank == 0 and 'weight' in name and global_step % 100 == 0:
+                indices_save_file = os.path.join(
+                        args.output_dir,
+                        'topk',
+                        f'{name}_indices_step_{global_step}.pt'
+                    )
+                values_save_file = os.path.join(
+                        args.output_dir,
+                        'topk',
+                        f'{name}_values_step_{global_step}.pt'
+                    )
+                torch.save(indices, indices_save_file)
+                torch.save(vals, values_save_file)
         scaler.step(optimizer)
         scaler.update()
     else:
@@ -500,7 +518,7 @@ def main(args):
                 for lrs in lr_schedulers:
                     lrs.step()
                 take_optimizer_step(optimizer, preconditioner, 
-                        model, scaler)
+                        model, scaler, global_step, args)
                 global_steps += 1
                 logger.log(tag='train',
                            step=global_steps+args.previous_phase_end_step,
